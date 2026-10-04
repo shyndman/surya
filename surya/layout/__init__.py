@@ -5,6 +5,7 @@ from typing import List, Optional
 from PIL import Image
 
 from surya.common.blank import is_blank_region
+from surya.common.progress import ProgressEvent, ProgressHandler
 from surya.inference import SuryaInferenceManager, get_default_manager
 from surya.inference.parsers import denorm_bbox, parse_layout
 from surya.inference.prompts import LAYOUT_JSON_SCHEMA, PROMPT_TYPE_LAYOUT
@@ -41,6 +42,8 @@ class LayoutPredictor:
         images: List[Image.Image],
         target_image_sizes: Optional[List[tuple]] = None,
         max_tokens: Optional[int] = None,
+        *,
+        on_progress: ProgressHandler | None = None,
     ) -> List[LayoutResult]:
         """Run layout on a batch of images.
 
@@ -51,6 +54,8 @@ class LayoutPredictor:
         """
         if not images:
             return []
+        if on_progress is not None:
+            on_progress(ProgressEvent("layout", 0, len(images)))
         manager = self.manager or get_default_manager()
 
         max_tokens = max_tokens or settings.SURYA_MAX_TOKENS_LAYOUT
@@ -64,7 +69,14 @@ class LayoutPredictor:
             )
             for img in images
         ]
-        outputs = manager.generate(batch)
+
+        def report_progress(completed: int, total: int) -> None:
+            if on_progress is not None:
+                on_progress(ProgressEvent("layout", completed, total))
+
+        outputs = manager.generate(
+            batch, on_progress=report_progress if on_progress is not None else None
+        )
 
         if target_image_sizes is not None and len(target_image_sizes) != len(images):
             raise ValueError("target_image_sizes must match images length")

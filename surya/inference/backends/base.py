@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List
 
-
+from surya.common.progress import BatchProgressHandler
 from surya.inference.schema import BatchInputItem, BatchOutputItem
 
 
@@ -27,7 +27,12 @@ class Backend:
         """Stop the server if we spawned it."""
         raise NotImplementedError
 
-    def generate(self, batch: List[BatchInputItem]) -> List[BatchOutputItem]:
+    def generate(
+        self,
+        batch: List[BatchInputItem],
+        *,
+        on_progress: BatchProgressHandler | None = None,
+    ) -> List[BatchOutputItem]:
         raise NotImplementedError
 
     def capacity(self) -> int:

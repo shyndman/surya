@@ -1,5 +1,13 @@
+from surya.common.progress import ProgressEvent
+
+
 def test_layout_returns_blocks(layout_predictor, test_image):
-    layout_results = layout_predictor([test_image])
+    events = []
+    layout_results = layout_predictor([test_image], on_progress=events.append)
+    assert events == [
+        ProgressEvent("layout", 0, 1),
+        ProgressEvent("layout", 1, 1),
+    ]
     assert len(layout_results) == 1
     res = layout_results[0]
     assert res.image_bbox == [0, 0, 1024, 1024]

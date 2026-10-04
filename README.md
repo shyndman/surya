@@ -263,6 +263,16 @@ errors = ocr_error_predictor(["Sample text"], on_progress=show_progress)
 The local batch methods also accept `on_progress`: `batch_detection` and `batch_ocr_error_detection`.
 Callback exceptions propagate to the caller.
 
+`LayoutPredictor` and `RecognitionPredictor` also accept keyword-only `on_progress`.
+Their events use `"layout"` and `"ocr"` respectively and count actual submitted
+inference items: pages for layout/full-page OCR, non-skipped blocks for block OCR.
+Each nonempty inference batch emits `0/total` before manager startup, followed by
+one completion per item after its inference retries finish. Counts reset for
+each full-page regeneration batch and each fallback layout or block-OCR batch;
+the recognition callback is forwarded to those fallback stages. Empty inputs
+and batches with no submitted blocks emit no events. These completion events
+describe inference, not subsequent parsing or result assembly.
+
 ## Layout and reading order
 
 This command will write out a json file with the detected layout and reading order.

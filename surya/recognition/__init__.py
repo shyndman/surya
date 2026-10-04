@@ -11,6 +11,7 @@ from typing import List, Optional
 from PIL import Image
 
 from surya.common.blank import is_blank_region
+from surya.common.progress import ProgressEvent, ProgressHandler
 from surya.inference import SuryaInferenceManager, get_default_manager
 from surya.inference.parsers import clean_block_html, parse_full_page_html
 from surya.inference.prompts import (
@@ -18,7 +19,7 @@ from surya.inference.prompts import (
     PROMPT_TYPE_HIGH_ACCURACY_BBOX,
     SKIP_OCR_LABELS,
 )
-from surya.inference.schema import BatchInputItem
+from surya.inference.schema import BatchInputItem, BatchOutputItem
 from surya.inference.util import image_token_budget
 from surya.layout.label import LAYOUT_PRED_RELABEL, TEXT_LABELS
 from surya.layout.schema import LayoutResult
@@ -139,6 +140,7 @@ class RecognitionPredictor:
         layout_results: Optional[List[LayoutResult]] = None,
         *,
         full_page: Optional[bool] = None,
+        on_progress: ProgressHandler | None = None,
     ) -> List[PageOCRResult]:
         """Run OCR on each page.
 
@@ -166,7 +168,9 @@ class RecognitionPredictor:
                     "layout_results; layout will be used as fallback if the "
                     "full-page output devolves into a repetition loop."
                 )
-            return self._full_page_ocr(images, fallback_layout=layout_results)
+            return self._full_page_ocr(
+                images, fallback_layout=layout_results, on_progress=on_progress
+            )
         if layout_results is None:
             raise ValueError("layout_results required when full_page=False")
         if len(images) != len(layout_results):
@@ -174,7 +178,6 @@ class RecognitionPredictor:
                 f"images and layout_results must be same length "
                 f"({len(images)} vs {len(layout_results)})"
             )
-        manager = self.manager or get_default_manager()
 
         # Build a flat batch across all pages for max concurrency
         batch: List[BatchInputItem] = []
@@ -201,7 +204,7 @@ class RecognitionPredictor:
                 )
                 block_index_map.append((page_idx, block_idx))
 
-        outputs = manager.generate(batch) if batch else []
+        outputs = self._generate_ocr(batch, on_progress) if batch else []
 
         # Index outputs by (page_idx, block_idx)
         out_by_key = {}
@@ -264,10 +267,29 @@ class RecognitionPredictor:
             )
         return results
 
+    def _generate_ocr(
+        self,
+        batch: List[BatchInputItem],
+        on_progress: ProgressHandler | None,
+    ) -> List[BatchOutputItem]:
+        if on_progress is not None:
+            on_progress(ProgressEvent("ocr", 0, len(batch)))
+        manager = self.manager or get_default_manager()
+
+        def report_progress(completed: int, total: int) -> None:
+            if on_progress is not None:
+                on_progress(ProgressEvent("ocr", completed, total))
+
+        return manager.generate(
+            batch, on_progress=report_progress if on_progress is not None else None
+        )
+
     def _full_page_ocr(
         self,
         images: List[Image.Image],
         fallback_layout: Optional[List[LayoutResult]] = None,
+        *,
+        on_progress: ProgressHandler | None = None,
     ) -> List[PageOCRResult]:
         """One HIGH_ACCURACY_BBOX_PROMPT request per page; parses divs into blocks.
 
@@ -277,7 +299,6 @@ class RecognitionPredictor:
         provides per-page LayoutResults to use on fallback; otherwise the
         LayoutPredictor is invoked lazily for just the affected pages.
         """
-        manager = self.manager or get_default_manager()
         results: List[Optional[PageOCRResult]] = [None] * len(images)
 
         def _build_page(out, img):
@@ -344,7 +365,10 @@ class RecognitionPredictor:
                 )
                 for i in pending
             ]
-            out_by_page = {o.metadata["page_idx"]: o for o in manager.generate(batch)}
+            out_by_page = {
+                o.metadata["page_idx"]: o
+                for o in self._generate_ocr(batch, on_progress)
+            }
             still: List[int] = []
             for i in pending:
                 r = _build_page(out_by_page.get(i), images[i])
@@ -372,8 +396,12 @@ class RecognitionPredictor:
                     f"running layout for {len(fb_images)} page(s) requiring "
                     f"block-mode fallback"
                 )
-                fb_layouts = LayoutPredictor(self.manager)(fb_images)
-            fb_results = self.__call__(fb_images, fb_layouts, full_page=False)
+                fb_layouts = LayoutPredictor(self.manager)(
+                    fb_images, on_progress=on_progress
+                )
+            fb_results = self.__call__(
+                fb_images, fb_layouts, full_page=False, on_progress=on_progress
+            )
             for fb_idx, page_idx in enumerate(needs_fallback):
                 results[page_idx] = fb_results[fb_idx]
 

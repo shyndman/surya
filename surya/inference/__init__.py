@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from typing import List, Optional
 
+from surya.common.progress import BatchProgressHandler
 from surya.inference.backends.base import Backend
 from surya.inference.schema import BatchInputItem, BatchOutputItem
 from surya.logging import get_logger
@@ -98,8 +99,13 @@ class SuryaInferenceManager:
     def stop(self) -> None:
         self.backend.stop()
 
-    def generate(self, batch: List[BatchInputItem]) -> List[BatchOutputItem]:
-        return self.backend.generate(batch)
+    def generate(
+        self,
+        batch: List[BatchInputItem],
+        *,
+        on_progress: BatchProgressHandler | None = None,
+    ) -> List[BatchOutputItem]:
+        return self.backend.generate(batch, on_progress=on_progress)
 
     def capacity(self) -> int:
         """Server concurrency capacity (see Backend.capacity)."""

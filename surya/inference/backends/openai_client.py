@@ -10,11 +10,14 @@ import base64
 import io
 import math
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 from typing import List, Optional
 
+from openai import OpenAI
 from PIL import Image
 
+from surya.common.progress import BatchProgressHandler
 from surya.inference.prompts import PROMPT_MAPPING
 from surya.inference.schema import (
     BatchInputItem,
@@ -69,7 +72,7 @@ def _mean_token_prob(logprobs_content) -> Optional[float]:
 
 def _generate_one(
     item: BatchInputItem,
-    client,
+    client: OpenAI,
     model_name: str,
     max_tokens_default: int,
     temperature: float,
@@ -155,9 +158,58 @@ def _should_retry(
     return has_repeat
 
 
+def _process_batch_item(
+    item: BatchInputItem,
+    client: OpenAI,
+    model_name: str,
+    max_tokens_default: int,
+    temperature: float,
+    top_p: float,
+    timeout: float,
+    max_retries: int,
+    request_logprobs_default: bool,
+) -> BatchOutputItem:
+    result = _generate_one(
+        item,
+        client,
+        model_name,
+        max_tokens_default,
+        temperature,
+        top_p,
+        timeout,
+        request_logprobs_default,
+    )
+    retries = 0
+    while _should_retry(result, retries, max_retries):
+        backoff = 1.5 * (retries + 1) if result.error else 0
+        if backoff:
+            time.sleep(backoff)
+        retry_temp = min(temperature + 0.2 * (retries + 1), 0.8)
+        retry_top_p = 0.95 if not result.error else top_p
+        result = _generate_one(
+            item,
+            client,
+            model_name,
+            max_tokens_default,
+            retry_temp,
+            retry_top_p,
+            timeout,
+            request_logprobs_default,
+        )
+        retries += 1
+    return BatchOutputItem(
+        raw=result.raw,
+        token_count=result.token_count,
+        error=result.error,
+        mean_token_prob=result.mean_token_prob,
+        logprobs=result.logprobs,
+        metadata=item.metadata,
+    )
+
+
 def chat_completions_batch(
     batch: List[BatchInputItem],
-    client,
+    client: OpenAI,
     model_name: str,
     max_tokens_default: int = 2048,
     temperature: float = 0.0,
@@ -166,50 +218,38 @@ def chat_completions_batch(
     max_workers: Optional[int] = None,
     max_retries: int = 3,
     request_logprobs_default: bool = True,
+    *,
+    on_progress: BatchProgressHandler | None = None,
 ) -> List[BatchOutputItem]:
-    """Run a batch of items through the chat completions endpoint with concurrent workers."""
+    """Generate concurrently; report finished items once, after all their retries.
+
+    Callbacks run serially on the consuming thread, with counts 1..len(batch).
+    Results retain input order even when completion callbacks advance out of order.
+    """
     if not batch:
         return []
     if max_workers is None:
         max_workers = min(64, len(batch))
 
-    def _process(item: BatchInputItem) -> BatchOutputItem:
-        result = _generate_one(
-            item,
-            client=client,
-            model_name=model_name,
-            max_tokens_default=max_tokens_default,
-            temperature=temperature,
-            top_p=top_p,
-            timeout=timeout,
-            request_logprobs_default=request_logprobs_default,
-        )
-        retries = 0
-        while _should_retry(result, retries, max_retries):
-            backoff = 1.5 * (retries + 1) if result.error else 0
-            if backoff:
-                time.sleep(backoff)
-            retry_temp = min(temperature + 0.2 * (retries + 1), 0.8)
-            retry_top_p = 0.95 if not result.error else top_p
-            result = _generate_one(
-                item,
-                client=client,
-                model_name=model_name,
-                max_tokens_default=max_tokens_default,
-                temperature=retry_temp,
-                top_p=retry_top_p,
-                timeout=timeout,
-                request_logprobs_default=request_logprobs_default,
-            )
-            retries += 1
-        return BatchOutputItem(
-            raw=result.raw,
-            token_count=result.token_count,
-            error=result.error,
-            mean_token_prob=result.mean_token_prob,
-            logprobs=result.logprobs,
-            metadata=item.metadata,
-        )
+    _process = partial(
+        _process_batch_item,
+        client=client,
+        model_name=model_name,
+        max_tokens_default=max_tokens_default,
+        temperature=temperature,
+        top_p=top_p,
+        timeout=timeout,
+        max_retries=max_retries,
+        request_logprobs_default=request_logprobs_default,
+    )
 
+    results: dict[int, BatchOutputItem] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        return list(executor.map(_process, batch))
+        pending = {
+            executor.submit(_process, item): index for index, item in enumerate(batch)
+        }
+        for completed, future in enumerate(as_completed(pending), start=1):
+            results[pending[future]] = future.result()
+            if on_progress is not None:
+                on_progress(completed, len(batch))
+    return [results[index] for index in range(len(batch))]

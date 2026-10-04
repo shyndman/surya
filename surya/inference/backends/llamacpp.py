@@ -16,6 +16,7 @@ from typing import List, Optional
 from huggingface_hub import hf_hub_download
 from openai import OpenAI
 
+from surya.common.progress import BatchProgressHandler
 from surya.inference.backends.base import Backend, ServerHandle
 from surya.inference.backends.openai_client import chat_completions_batch
 from surya.inference.backends.spawn import (
@@ -202,7 +203,12 @@ class LlamaCppBackend(Backend):
         self.handle = None
         self._client = None
 
-    def generate(self, batch: List[BatchInputItem]) -> List[BatchOutputItem]:
+    def generate(
+        self,
+        batch: List[BatchInputItem],
+        *,
+        on_progress: BatchProgressHandler | None = None,
+    ) -> List[BatchOutputItem]:
         if self.handle is None or self._client is None:
             self.start()
         return chat_completions_batch(
@@ -212,4 +218,5 @@ class LlamaCppBackend(Backend):
             timeout=settings.SURYA_INFERENCE_TIMEOUT_SECONDS,
             max_workers=settings.SURYA_INFERENCE_PARALLEL or self.DEFAULT_PARALLEL,
             request_logprobs_default=settings.SURYA_INFERENCE_LOGPROBS,
+            on_progress=on_progress,
         )
