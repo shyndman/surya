@@ -6,9 +6,9 @@ import torch
 import torch.nn.functional as F
 
 from PIL import Image
-from tqdm import tqdm
 
 from surya.common.predictor import BasePredictor
+from surya.common.progress import ProgressEvent, ProgressHandler
 
 from surya.detection.loader import DetectionModelLoader
 from surya.detection.parallel import FakeExecutor
@@ -24,8 +24,9 @@ class DetectionPredictor(BasePredictor):
     Public construction is client-backed: the model runs in a single shared server
     process (surya.detection.server) and this object POSTs images to it, so N worker
     processes don't each load their own copy. Use ``DetectionPredictor.local()`` for
-    a process-local predictor that owns the model (that's what the server uses). The
-    __call__ signature and TextDetectionResult output are unchanged.
+    a process-local predictor that owns the model (that's what the server uses).
+    Local calls accept an optional batch-progress callback.
+    Server calls do not emit progress.
     """
 
     model_loader_cls = DetectionModelLoader
@@ -58,12 +59,19 @@ class DetectionPredictor(BasePredictor):
         return super().to(device_dtype)
 
     def __call__(
-        self, images: List[Image.Image], batch_size=None, include_maps=False
+        self,
+        images: List[Image.Image],
+        batch_size: int | None = None,
+        include_maps: bool = False,
+        *,
+        on_progress: ProgressHandler | None = None,
     ) -> List[TextDetectionResult]:
         if self._client is not None:
             return self._client(images, include_maps=include_maps)
 
-        detection_generator = self.batch_detection(images, batch_size=batch_size)
+        detection_generator = self.batch_detection(
+            images, batch_size=batch_size, on_progress=on_progress
+        )
 
         postprocessing_futures = []
         max_workers = min(settings.DETECTOR_POSTPROCESSING_CPU_WORKERS, len(images))
@@ -96,7 +104,11 @@ class DetectionPredictor(BasePredictor):
         return img
 
     def batch_detection(
-        self, images: List, batch_size=None
+        self,
+        images: List[Image.Image],
+        batch_size: int | None = None,
+        *,
+        on_progress: ProgressHandler | None = None,
     ) -> Generator[Tuple[List[List[np.ndarray]], List[Tuple[int, int]]], None, None]:
         assert all([isinstance(image, Image.Image) for image in images])
         if batch_size is None:
@@ -123,9 +135,10 @@ class DetectionPredictor(BasePredictor):
         if len(current_batch) > 0:
             batches.append(current_batch)
 
-        for batch_idx in tqdm(
-            range(len(batches)), desc="Detecting bboxes", disable=self.disable_tqdm
-        ):
+        total_batches = len(batches)
+        if on_progress is not None:
+            on_progress(ProgressEvent("detection", completed=0, total=total_batches))
+        for batch_idx in range(total_batches):
             batch_image_idxs = batches[batch_idx]
             batch_images = [images[j].convert("RGB") for j in batch_image_idxs]
 
@@ -180,5 +193,11 @@ class DetectionPredictor(BasePredictor):
                     preds[idx] = heatmaps
 
             yield preds, [orig_sizes[j] for j in batch_image_idxs]
+            if on_progress is not None:
+                on_progress(
+                    ProgressEvent(
+                        "detection", completed=batch_idx + 1, total=total_batches
+                    )
+                )
 
         torch.cuda.empty_cache()

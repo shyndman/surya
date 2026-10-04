@@ -4,16 +4,15 @@ Public construction is client-backed: the DistilBert model runs in a single shar
 server process (surya.ocr_error.server) and this object POSTs texts to it, so N
 worker processes don't each load their own copy. Use ``OCRErrorPredictor.local()``
 to build a process-local predictor that owns the model (that's what the server
-uses internally). The __call__ signature and OCRErrorDetectionResult output are
-unchanged, so callers (marker) are unaffected.
+uses internally). Local calls accept an optional batch-progress callback.
+Server calls do not emit progress.
 """
 
 import math
 from typing import List, Optional
 
-from tqdm import tqdm
-
 from surya.common.predictor import BasePredictor
+from surya.common.progress import ProgressEvent, ProgressHandler
 from surya.ocr_error.loader import OCRErrorModelLoader
 from surya.ocr_error.model.config import ID2LABEL
 from surya.ocr_error.schema import OCRErrorDetectionResult
@@ -54,14 +53,24 @@ class OCRErrorPredictor(BasePredictor):
             return
         return super().to(device_dtype)
 
-    def __call__(self, texts: List[str], batch_size: Optional[int] = None):
+    def __call__(
+        self,
+        texts: List[str],
+        batch_size: Optional[int] = None,
+        *,
+        on_progress: ProgressHandler | None = None,
+    ) -> OCRErrorDetectionResult:
         if self._client is not None:
             return self._client(texts)
-        return self.batch_ocr_error_detection(texts, batch_size)
+        return self.batch_ocr_error_detection(texts, batch_size, on_progress=on_progress)
 
     def batch_ocr_error_detection(
-        self, texts: List[str], batch_size: Optional[int] = None
-    ):
+        self,
+        texts: List[str],
+        batch_size: Optional[int] = None,
+        *,
+        on_progress: ProgressHandler | None = None,
+    ) -> OCRErrorDetectionResult:
         if batch_size is None:
             batch_size = self.get_batch_size()
 
@@ -71,11 +80,9 @@ class OCRErrorPredictor(BasePredictor):
         )
         predictions = []
         scores = []
-        for batch_idx in tqdm(
-            range(num_batches),
-            desc="Running OCR Error Detection",
-            disable=self.disable_tqdm,
-        ):
+        if on_progress is not None:
+            on_progress(ProgressEvent("ocr_error", completed=0, total=num_batches))
+        for batch_idx in range(num_batches):
             start_idx, end_idx = batch_idx * batch_size, (batch_idx + 1) * batch_size
             batch_input_ids = texts_processed.input_ids[start_idx:end_idx].to(
                 self.model.device
@@ -89,6 +96,12 @@ class OCRErrorPredictor(BasePredictor):
                 probs = pred.logits.softmax(dim=1)
                 predictions.extend(probs.argmax(dim=1).cpu().tolist())
                 scores.extend(probs[:, 1].cpu().tolist())
+            if on_progress is not None:
+                on_progress(
+                    ProgressEvent(
+                        "ocr_error", completed=batch_idx + 1, total=num_batches
+                    )
+                )
 
         return OCRErrorDetectionResult(
             texts=texts,

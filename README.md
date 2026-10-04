@@ -234,6 +234,35 @@ det_predictor = DetectionPredictor()
 predictions = det_predictor([Image.open(IMAGE_PATH)])
 ```
 
+Local detection and OCR-error predictors accept a keyword-only `on_progress` callback.
+Import `ProgressEvent` and `ProgressHandler` from `surya.common.progress` to type callbacks.
+The callback receives a frozen `ProgressEvent` with `operation`, `completed`, and `total`.
+The operation is `"detection"` or `"ocr_error"`. Counts refer to batches, not images or texts.
+Each call emits zero before the batch loop, then a cumulative count after each completed batch.
+Detection emits each count after the consumer resumes the batch generator.
+The final event marks batch-loop completion, not completion of detection postprocessing.
+Without a callback, these loops produce no progress output.
+Default server-backed calls do not emit progress or send callbacks to the server.
+Model-download progress bars remain unchanged.
+
+```python
+from surya.common.progress import ProgressEvent
+from surya.ocr_error import OCRErrorPredictor
+
+
+def show_progress(event: ProgressEvent) -> None:
+    print(f"{event.operation}: {event.completed}/{event.total}")
+
+
+det_predictor = DetectionPredictor.local()
+predictions = det_predictor([Image.open(IMAGE_PATH)], on_progress=show_progress)
+ocr_error_predictor = OCRErrorPredictor.local()
+errors = ocr_error_predictor(["Sample text"], on_progress=show_progress)
+```
+
+The local batch methods also accept `on_progress`: `batch_detection` and `batch_ocr_error_detection`.
+Callback exceptions propagate to the caller.
+
 ## Layout and reading order
 
 This command will write out a json file with the detected layout and reading order.
