@@ -109,6 +109,10 @@ What's different:
 
 Surya 2 runs layout, OCR, and table recognition through a single VLM.  The inference manager will spawn one for you on first use; you can also point it at an existing server via `SURYA_INFERENCE_URL=http://host:port/v1`.
 
+External servers can list more than one model. Surya selects `SURYA_MODEL_CHECKPOINT`
+from `/v1/models` regardless of its position, then uses that ID for inference requests.
+If the server lists models but omits the requested model, attachment fails.
+
 - Inspect the settings in `surya/settings.py`.  You can override any setting via env var (e.g. `SURYA_INFERENCE_BACKEND=vllm`).
 - Text detection and OCR errors are separate models.
 

@@ -14,7 +14,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, TypedDict, cast
 
 import httpx
 
@@ -66,17 +66,31 @@ def wait_for_health(
     return False
 
 
-def probe_model_id(openai_base: str, timeout: float = 5.0) -> Optional[str]:
-    """Returns the model id reported by the running server, or None on failure."""
+class ModelEntry(TypedDict):
+    id: str
+
+
+class ModelList(TypedDict):
+    data: list[ModelEntry]
+
+
+def probe_model_id(
+    openai_base: str, expected_model_name: str, timeout: float = 5.0
+) -> Optional[str]:
+    """Return the requested model if listed, otherwise the first model."""
     try:
         with httpx.Client(timeout=timeout) as client:
             r = client.get(f"{openai_base}/models")
             r.raise_for_status()
-            data = r.json()
+            data = cast(ModelList, r.json())
             models = data.get("data") or []
+            for model in models:
+                if model["id"] == expected_model_name:
+                    return expected_model_name
             if models:
-                return models[0].get("id")
+                return models[0]["id"]
     except Exception:
+        logger.exception("Could not read the model list from %s", openai_base)
         return None
     return None
 
@@ -215,7 +229,7 @@ def attach_or_spawn(
                 f"SURYA_INFERENCE_URL={base_url} is not reachable at /health. "
                 "Start the server or unset the variable."
             )
-        model_name = probe_model_id(base_url) or expected_model_name
+        model_name = probe_model_id(base_url, expected_model_name) or expected_model_name
         if model_name != expected_model_name:
             raise SpawnError(
                 f"Model mismatch at {base_url}: expected {expected_model_name!r}, got {model_name!r}. "
@@ -242,7 +256,10 @@ def attach_or_spawn(
         port = existing.get("port")
         pid = existing.get("pid")
         if port and probe_health(health_url_for(port)):
-            running_model = probe_model_id(openai_url_for(port)) or expected_model_name
+            running_model = (
+                probe_model_id(openai_url_for(port), expected_model_name)
+                or expected_model_name
+            )
             if running_model != expected_model_name:
                 raise SpawnError(
                     f"Existing {backend} server on port {port} serves {running_model!r}, "
@@ -280,7 +297,8 @@ def attach_or_spawn(
             port = existing.get("port")
             if port and probe_health(health_url_for(port)):
                 running_model = (
-                    probe_model_id(openai_url_for(port)) or expected_model_name
+                    probe_model_id(openai_url_for(port), expected_model_name)
+                    or expected_model_name
                 )
                 if running_model != expected_model_name:
                     raise SpawnError(
@@ -351,7 +369,7 @@ def attach_or_spawn(
             )
 
         # 7. Verify model name
-        running_model = probe_model_id(openai_url_for(port))
+        running_model = probe_model_id(openai_url_for(port), expected_model_name)
         if running_model and running_model != expected_model_name:
             logger.warning(
                 f"{backend} server reports model={running_model!r} "
