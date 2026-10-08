@@ -13,6 +13,8 @@ import shutil
 import subprocess
 from typing import List, Optional
 
+import torch
+
 from surya.common.progress import BatchProgressHandler
 from surya.inference.backends.base import Backend
 from surya.inference.schema import BatchInputItem, BatchOutputItem
@@ -34,8 +36,6 @@ def _has_nvidia_gpu() -> bool:
     probing for the GPU directly via ``nvidia-smi``.
     """
     try:
-        import torch
-
         if torch.cuda.is_available():
             return True
     except Exception:
@@ -90,6 +90,12 @@ class SuryaInferenceManager:
     def __init__(self, method: Optional[str] = None, lazy: bool = True):
         self.method = method or _autodetect_backend()
         self.backend: Backend = _build_backend(self.method)
+        logger.info("Selected Surya inference backend: %s", self.backend.name)
+        logger.info(
+            "Local Torch CUDA availability: %s; this does not identify the "
+            "inference server's model device",
+            torch.cuda.is_available(),
+        )
         if not lazy:
             self.backend.start()
 

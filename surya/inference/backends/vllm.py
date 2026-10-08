@@ -117,6 +117,10 @@ class VllmBackend(Backend):
 
         # If user pinned an external server, attach without spawning docker.
         if settings.SURYA_INFERENCE_URL:
+            logger.info(
+                "Connecting to external vLLM inference; remote model device "
+                "is unknown to Surya"
+            )
             spawned = attach_or_spawn(
                 backend=self.name,
                 expected_model_name=settings.SURYA_MODEL_CHECKPOINT,
@@ -143,6 +147,12 @@ class VllmBackend(Backend):
 
         def spawn_fn(port: int) -> SpawnHandle:
             container_name = f"surya-vllm-{port}"
+            logger.info(
+                "Starting local vLLM with NVIDIA GPU access requested for %s; "
+                "actual model device diagnostics are in docker logs %s",
+                settings.VLLM_GPUS,
+                container_name,
+            )
             hf_cache = os.path.expanduser(settings.DOCKER_HF_CACHE_PATH)
             cmd = [
                 docker,
@@ -206,6 +216,11 @@ class VllmBackend(Backend):
             openai_url_for=_openai_url,
             startup_timeout=settings.SURYA_INFERENCE_STARTUP_TIMEOUT,
         )
+        if not spawned.spawned_by_us:
+            logger.info(
+                "Attached to an existing vLLM server; its model device "
+                "is unknown to Surya"
+            )
         self.handle = ServerHandle(
             base_url=spawned.base_url,
             model_name=spawned.model_name,

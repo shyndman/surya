@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 
 from surya.common.load import ModelLoader
+from surya.logging import get_logger
 from surya.settings import settings
 
 
@@ -32,6 +33,11 @@ class BasePredictor:
 
         loader = self.model_loader_cls(checkpoint)
         self.model = loader.model(device, dtype, attention_implementation)
+        get_logger().info(
+            "Loaded %s Torch model on %s",
+            type(self).__name__,
+            self.model.device,
+        )
         self.processor = loader.processor()
         self._disable_tqdm = settings.DISABLE_TQDM
 

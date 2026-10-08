@@ -83,6 +83,10 @@ class LlamaCppBackend(Backend):
         # If user pinned an external server, attach without spawning.
         # No binary or GGUF download needed in that case.
         if settings.SURYA_INFERENCE_URL:
+            logger.info(
+                "Connecting to external llama.cpp inference; remote model device "
+                "is unknown to Surya"
+            )
             spawned = attach_or_spawn(
                 backend=self.name,
                 expected_model_name=settings.SURYA_MODEL_CHECKPOINT,
@@ -162,6 +166,12 @@ class LlamaCppBackend(Backend):
                 cmd.append(extra)
             logger.info(f"Spawning: {' '.join(cmd)}")
             log_path = Path("~/.cache/datalab/surya/llamacpp_server.log").expanduser()
+            logger.info(
+                "Starting local llama.cpp with requested GPU layer offload %s; "
+                "actual CUDA/device and offload diagnostics are in %s",
+                settings.LLAMA_CPP_NGL,
+                log_path,
+            )
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_fp = open(log_path, "ab")
             proc = subprocess.Popen(
@@ -182,6 +192,11 @@ class LlamaCppBackend(Backend):
             openai_url_for=_openai_url,
             startup_timeout=settings.SURYA_INFERENCE_STARTUP_TIMEOUT,
         )
+        if not spawned.spawned_by_us:
+            logger.info(
+                "Attached to an existing llama.cpp server; its model device "
+                "is unknown to Surya"
+            )
         self.handle = ServerHandle(
             base_url=spawned.base_url,
             model_name=spawned.model_name,

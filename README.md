@@ -394,6 +394,20 @@ export SURYA_INFERENCE_URL=http://localhost:8000/v1
 | `SURYA_INFERENCE_KEEP_ALIVE`      | false                             | Leave the spawned server up after exit (cf. `--keep_server`) |
 | `SURYA_GUIDED_LAYOUT`             | true                              | JSON-schema-constrained layout decode                 |
 
+Surya logs backend selection and device diagnostics at INFO level, including when
+used as a Python library (`LOGLEVEL` controls verbosity). Local Torch CUDA
+availability is reported separately: it does not establish the device used by
+an inference server. Torch predictors report their loaded model's device; the
+fast-layout engine also reports its detector device.
+
+For locally spawned llama.cpp, Surya reports requested GPU layer offload and the
+native log path, `~/.cache/datalab/surya/llamacpp_server.log`; inspect that file for
+actual CUDA/device initialization and layer offload. For locally spawned vLLM,
+Surya reports requested NVIDIA GPU access and the `docker logs surya-vllm-<port>`
+command for server-side device diagnostics. These requests are not proof of model
+placement. For an external or already-running inference server, the remote model
+device is explicitly unknown to Surya; consult that server's logs.
+
 # Limitations
 
 - This is specialized for document OCR. Performance on photos or natural scenes is not the goal.
