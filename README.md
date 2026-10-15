@@ -277,6 +277,33 @@ the recognition callback is forwarded to those fallback stages. Empty inputs
 and batches with no submitted blocks emit no events. These completion events
 describe inference, not subsequent parsing or result assembly.
 
+OCR and layout events include the same frozen `ProgressContext` record in `event.context`:
+
+| Field | Layout | OCR |
+| --- | --- | --- |
+| `mode` | `balanced`, `fast` | `full_page`, `block` |
+| `purpose` | `normal`, `ocr_fallback` | `normal`, `flagged_blocks`, `table`, `equation` |
+| `phase` | `regions`, `regions_and_reading_order` | `recognition`, `regeneration`, `block_fallback` |
+| `unit` | `pages` | `pages` for full-page OCR, `blocks` for block OCR |
+| `attempt` | `1` | Starts at `1`. Full-page regeneration increments it. Block fallback starts at `1`. |
+
+`purpose` describes why the work runs. `phase` describes the current step.
+Both predictors accept a keyword-only `purpose` argument that defaults to `normal`.
+Recognition keeps the OCR purpose through regeneration and block fallback.
+It sets the layout purpose to `ocr_fallback` when failed pages require layout.
+Callers can mark block OCR as `flagged_blocks`, `table`, or `equation`.
+`attempt` counts full-page generation passes, not retries inside the inference backend.
+Successful pages do not enter later regeneration batches.
+Other operations leave `event.context` as `None`.
+
+`FastLayoutPredictor` also accepts keyword-only `on_progress` and `purpose`.
+It reports zero before the service call and the page total after the call returns.
+Empty input emits no events. A failed service call emits no completion event.
+The phase is `regions_and_reading_order` when `use_order` requests learned reading order.
+Otherwise, the phase is `regions`.
+The phase describes requested work, not proof that the reading-order model was available.
+The service returns both steps together, so events do not report separate completion times.
+
 ## Layout and reading order
 
 This command will write out a json file with the detected layout and reading order.

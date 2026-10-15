@@ -6,12 +6,17 @@ crops each block, runs BLOCK_PROMPT, returns PageOCRResult per page.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from PIL import Image
 
 from surya.common.blank import is_blank_region
-from surya.common.progress import ProgressEvent, ProgressHandler
+from surya.common.progress import (
+    OCRPurpose,
+    ProgressContext,
+    ProgressEvent,
+    ProgressHandler,
+)
 from surya.inference import SuryaInferenceManager, get_default_manager
 from surya.inference.parsers import clean_block_html, parse_full_page_html
 from surya.inference.prompts import (
@@ -141,6 +146,7 @@ class RecognitionPredictor:
         *,
         full_page: Optional[bool] = None,
         on_progress: ProgressHandler | None = None,
+        purpose: OCRPurpose = "normal",
     ) -> List[PageOCRResult]:
         """Run OCR on each page.
 
@@ -169,7 +175,10 @@ class RecognitionPredictor:
                     "full-page output devolves into a repetition loop."
                 )
             return self._full_page_ocr(
-                images, fallback_layout=layout_results, on_progress=on_progress
+                images,
+                fallback_layout=layout_results,
+                on_progress=on_progress,
+                purpose=purpose,
             )
         if layout_results is None:
             raise ValueError("layout_results required when full_page=False")
@@ -178,6 +187,23 @@ class RecognitionPredictor:
                 f"images and layout_results must be same length "
                 f"({len(images)} vs {len(layout_results)})"
             )
+        return self._block_ocr(
+            images,
+            layout_results,
+            on_progress=on_progress,
+            purpose=purpose,
+            phase="recognition",
+        )
+
+    def _block_ocr(
+        self,
+        images: List[Image.Image],
+        layout_results: List[LayoutResult],
+        *,
+        on_progress: ProgressHandler | None,
+        purpose: OCRPurpose,
+        phase: Literal["recognition", "block_fallback"],
+    ) -> List[PageOCRResult]:
 
         # Build a flat batch across all pages for max concurrency
         batch: List[BatchInputItem] = []
@@ -204,7 +230,8 @@ class RecognitionPredictor:
                 )
                 block_index_map.append((page_idx, block_idx))
 
-        outputs = self._generate_ocr(batch, on_progress) if batch else []
+        context = ProgressContext("block", purpose, phase, "blocks")
+        outputs = self._generate_ocr(batch, on_progress, context) if batch else []
 
         # Index outputs by (page_idx, block_idx)
         out_by_key = {}
@@ -271,14 +298,15 @@ class RecognitionPredictor:
         self,
         batch: List[BatchInputItem],
         on_progress: ProgressHandler | None,
+        context: ProgressContext,
     ) -> List[BatchOutputItem]:
         if on_progress is not None:
-            on_progress(ProgressEvent("ocr", 0, len(batch)))
+            on_progress(ProgressEvent("ocr", 0, len(batch), context=context))
         manager = self.manager or get_default_manager()
 
         def report_progress(completed: int, total: int) -> None:
             if on_progress is not None:
-                on_progress(ProgressEvent("ocr", completed, total))
+                on_progress(ProgressEvent("ocr", completed, total, context=context))
 
         return manager.generate(
             batch, on_progress=report_progress if on_progress is not None else None
@@ -290,6 +318,7 @@ class RecognitionPredictor:
         fallback_layout: Optional[List[LayoutResult]] = None,
         *,
         on_progress: ProgressHandler | None = None,
+        purpose: OCRPurpose,
     ) -> List[PageOCRResult]:
         """One HIGH_ACCURACY_BBOX_PROMPT request per page; parses divs into blocks.
 
@@ -365,9 +394,16 @@ class RecognitionPredictor:
                 )
                 for i in pending
             ]
+            context = ProgressContext(
+                "full_page",
+                purpose,
+                "recognition" if round_i == 0 else "regeneration",
+                "pages",
+                attempt=round_i + 1,
+            )
             out_by_page = {
                 o.metadata["page_idx"]: o
-                for o in self._generate_ocr(batch, on_progress)
+                for o in self._generate_ocr(batch, on_progress, context)
             }
             still: List[int] = []
             for i in pending:
@@ -397,10 +433,14 @@ class RecognitionPredictor:
                     f"block-mode fallback"
                 )
                 fb_layouts = LayoutPredictor(self.manager)(
-                    fb_images, on_progress=on_progress
+                    fb_images, on_progress=on_progress, purpose="ocr_fallback"
                 )
-            fb_results = self.__call__(
-                fb_images, fb_layouts, full_page=False, on_progress=on_progress
+            fb_results = self._block_ocr(
+                fb_images,
+                fb_layouts,
+                on_progress=on_progress,
+                purpose=purpose,
+                phase="block_fallback",
             )
             for fb_idx, page_idx in enumerate(needs_fallback):
                 results[page_idx] = fb_results[fb_idx]

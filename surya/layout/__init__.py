@@ -5,7 +5,12 @@ from typing import List, Optional
 from PIL import Image
 
 from surya.common.blank import is_blank_region
-from surya.common.progress import ProgressEvent, ProgressHandler
+from surya.common.progress import (
+    LayoutPurpose,
+    ProgressContext,
+    ProgressEvent,
+    ProgressHandler,
+)
 from surya.inference import SuryaInferenceManager, get_default_manager
 from surya.inference.parsers import denorm_bbox, parse_layout
 from surya.inference.prompts import LAYOUT_JSON_SCHEMA, PROMPT_TYPE_LAYOUT
@@ -44,6 +49,7 @@ class LayoutPredictor:
         max_tokens: Optional[int] = None,
         *,
         on_progress: ProgressHandler | None = None,
+        purpose: LayoutPurpose = "normal",
     ) -> List[LayoutResult]:
         """Run layout on a batch of images.
 
@@ -54,8 +60,11 @@ class LayoutPredictor:
         """
         if not images:
             return []
+        context = ProgressContext(
+            "balanced", purpose, "regions_and_reading_order", "pages"
+        )
         if on_progress is not None:
-            on_progress(ProgressEvent("layout", 0, len(images)))
+            on_progress(ProgressEvent("layout", 0, len(images), context=context))
         manager = self.manager or get_default_manager()
 
         max_tokens = max_tokens or settings.SURYA_MAX_TOKENS_LAYOUT
@@ -72,7 +81,7 @@ class LayoutPredictor:
 
         def report_progress(completed: int, total: int) -> None:
             if on_progress is not None:
-                on_progress(ProgressEvent("layout", completed, total))
+                on_progress(ProgressEvent("layout", completed, total, context=context))
 
         outputs = manager.generate(
             batch, on_progress=report_progress if on_progress is not None else None

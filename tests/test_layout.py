@@ -1,12 +1,15 @@
-from surya.common.progress import ProgressEvent
+from surya.common.progress import ProgressContext, ProgressEvent
 
 
 def test_layout_returns_blocks(layout_predictor, test_image):
     events = []
     layout_results = layout_predictor([test_image], on_progress=events.append)
+    context = ProgressContext(
+        "balanced", "normal", "regions_and_reading_order", "pages"
+    )
     assert events == [
-        ProgressEvent("layout", 0, 1),
-        ProgressEvent("layout", 1, 1),
+        ProgressEvent("layout", 0, 1, context=context),
+        ProgressEvent("layout", 1, 1, context=context),
     ]
     assert len(layout_results) == 1
     res = layout_results[0]

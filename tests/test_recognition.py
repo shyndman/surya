@@ -1,4 +1,4 @@
-from surya.common.progress import ProgressEvent
+from surya.common.progress import ProgressContext, ProgressEvent
 from surya.recognition import SKIP_CANON_LABELS
 
 
@@ -12,9 +12,10 @@ def test_recognition(recognition_predictor, layout_predictor, test_image):
         [test_image], layouts, on_progress=events.append
     )
     submitted = sum(box.label not in SKIP_CANON_LABELS for box in layouts[0].bboxes)
+    context = ProgressContext("block", "normal", "recognition", "blocks")
     expected = (
         [
-            ProgressEvent("ocr", completed, submitted)
+            ProgressEvent("ocr", completed, submitted, context=context)
             for completed in range(submitted + 1)
         ]
         if submitted

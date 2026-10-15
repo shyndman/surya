@@ -17,6 +17,12 @@ from typing import List, Optional
 
 from PIL import Image
 
+from surya.common.progress import (
+    LayoutPurpose,
+    ProgressContext,
+    ProgressEvent,
+    ProgressHandler,
+)
 from surya.layout.label import LAYOUT_PRED_RELABEL
 from surya.layout.schema import LayoutBox, LayoutResult
 from surya.logging import get_logger
@@ -163,6 +169,9 @@ class FastLayoutPredictor:
         threshold: Optional[float] = None,
         batch_size: Optional[int] = None,  # ignored: server controls batching
         use_order: Optional[bool] = None,
+        *,
+        on_progress: ProgressHandler | None = None,
+        purpose: LayoutPurpose = "normal",
     ) -> List[LayoutResult]:
         if not images:
             return []
@@ -172,4 +181,17 @@ class FastLayoutPredictor:
             else threshold
         )
         use_order = self.use_order if use_order is None else use_order
-        return self._client(images, threshold=threshold, use_order=use_order)
+        context = ProgressContext(
+            "fast",
+            purpose,
+            "regions_and_reading_order" if use_order else "regions",
+            "pages",
+        )
+        if on_progress is not None:
+            on_progress(ProgressEvent("layout", 0, len(images), context=context))
+        results = self._client(images, threshold=threshold, use_order=use_order)
+        if on_progress is not None:
+            on_progress(
+                ProgressEvent("layout", len(images), len(images), context=context)
+            )
+        return results
