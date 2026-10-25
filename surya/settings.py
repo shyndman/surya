@@ -3,7 +3,7 @@ from typing import Callable, Dict, Optional
 
 import torch
 from dotenv import find_dotenv
-from pydantic import computed_field
+from pydantic import SecretStr, computed_field
 from pydantic_settings import BaseSettings
 from pathlib import Path
 from platformdirs import user_cache_dir
@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # Backend selection
     SURYA_INFERENCE_BACKEND: Optional[str] = None  # "vllm" | "llamacpp" | None (auto)
     SURYA_INFERENCE_URL: Optional[str] = None  # external server, skip spawn
+    SURYA_INFERENCE_API_KEY: SecretStr = SecretStr("EMPTY")
     SURYA_INFERENCE_AUTOSTART: bool = True
     # Leave an auto-spawned server running after the process exits so later
     # commands attach to it instead of re-spawning (avoids repeated startup /

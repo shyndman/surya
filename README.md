@@ -112,6 +112,8 @@ Surya 2 runs layout, OCR, and table recognition through a single VLM.  The infer
 External servers can list more than one model. Surya selects `SURYA_MODEL_CHECKPOINT`
 from `/v1/models` regardless of its position, then uses that ID for inference requests.
 If the server lists models but omits the requested model, attachment fails.
+For authenticated llama.cpp servers, set `SURYA_INFERENCE_API_KEY` to the server's API key.
+Surya sends it as a bearer credential for both model discovery and inference.
 
 - Inspect the settings in `surya/settings.py`.  You can override any setting via env var (e.g. `SURYA_INFERENCE_BACKEND=vllm`).
 - Text detection and OCR errors are separate models.
@@ -417,6 +419,7 @@ export SURYA_INFERENCE_URL=http://localhost:8000/v1
 |-----------------------------------|-----------------------------------|--------------------------------------------------------|
 | `SURYA_INFERENCE_BACKEND`         | auto (vllm if NVIDIA, else llamacpp) | `vllm` \| `llamacpp` \| unset (auto)                |
 | `SURYA_INFERENCE_URL`             | (auto-spawn)                      | Attach to a running OpenAI-compatible server          |
+| `SURYA_INFERENCE_API_KEY`         | `EMPTY`                           | Bearer credential for llama.cpp model discovery and inference |
 | `SURYA_INFERENCE_PARALLEL`        | 8                                 | Client-side concurrency to the backend                |
 | `SURYA_INFERENCE_KEEP_ALIVE`      | false                             | Leave the spawned server up after exit (cf. `--keep_server`) |
 | `SURYA_GUIDED_LAYOUT`             | true                              | JSON-schema-constrained layout decode                 |

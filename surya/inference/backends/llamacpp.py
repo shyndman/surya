@@ -96,13 +96,17 @@ class LlamaCppBackend(Backend):
                 health_url_for=_health_url,
                 openai_url_for=_openai_url,
                 startup_timeout=settings.SURYA_INFERENCE_STARTUP_TIMEOUT,
+                api_key=settings.SURYA_INFERENCE_API_KEY,
             )
             self.handle = ServerHandle(
                 base_url=spawned.base_url,
                 model_name=spawned.model_name,
                 spawned_by_us=spawned.spawned_by_us,
             )
-            self._client = OpenAI(api_key="EMPTY", base_url=self.handle.base_url)
+            self._client = OpenAI(
+                api_key=settings.SURYA_INFERENCE_API_KEY.get_secret_value(),
+                base_url=self.handle.base_url,
+            )
             return self.handle
 
         binary = _resolve_llama_server_binary()
@@ -191,6 +195,7 @@ class LlamaCppBackend(Backend):
             health_url_for=_health_url,
             openai_url_for=_openai_url,
             startup_timeout=settings.SURYA_INFERENCE_STARTUP_TIMEOUT,
+            api_key=settings.SURYA_INFERENCE_API_KEY,
         )
         if not spawned.spawned_by_us:
             logger.info(
@@ -203,7 +208,7 @@ class LlamaCppBackend(Backend):
             spawned_by_us=spawned.spawned_by_us,
         )
         self._client = OpenAI(
-            api_key="EMPTY",
+            api_key=settings.SURYA_INFERENCE_API_KEY.get_secret_value(),
             base_url=self.handle.base_url,
         )
         return self.handle

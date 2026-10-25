@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional, TypedDict, cast
 
 import httpx
+from pydantic import SecretStr
 
 from surya.logging import get_logger
 from surya.settings import settings
@@ -75,12 +76,21 @@ class ModelList(TypedDict):
 
 
 def probe_model_id(
-    openai_base: str, expected_model_name: str, timeout: float = 5.0
+    openai_base: str,
+    expected_model_name: str,
+    timeout: float = 5.0,
+    *,
+    api_key: SecretStr | None = None,
 ) -> Optional[str]:
     """Return the requested model if listed, otherwise the first model."""
     try:
         with httpx.Client(timeout=timeout) as client:
-            r = client.get(f"{openai_base}/models")
+            headers = (
+                {"Authorization": f"Bearer {api_key.get_secret_value()}"}
+                if api_key is not None
+                else {}
+            )
+            r = client.get(f"{openai_base}/models", headers=headers)
             r.raise_for_status()
             data = cast(ModelList, r.json())
             models = data.get("data") or []
@@ -200,6 +210,7 @@ def attach_or_spawn(
     autostart=_UNSET,
     fixed_port=_UNSET,
     keep_alive=_UNSET,
+    api_key: SecretStr | None = None,
 ) -> SpawnedServer:
     """Generic attach-or-spawn with file lock and sentinel.
 
@@ -229,7 +240,10 @@ def attach_or_spawn(
                 f"SURYA_INFERENCE_URL={base_url} is not reachable at /health. "
                 "Start the server or unset the variable."
             )
-        model_name = probe_model_id(base_url, expected_model_name) or expected_model_name
+        model_name = (
+            probe_model_id(base_url, expected_model_name, api_key=api_key)
+            or expected_model_name
+        )
         if model_name != expected_model_name:
             raise SpawnError(
                 f"Model mismatch at {base_url}: expected {expected_model_name!r}, got {model_name!r}. "
@@ -257,7 +271,7 @@ def attach_or_spawn(
         pid = existing.get("pid")
         if port and probe_health(health_url_for(port)):
             running_model = (
-                probe_model_id(openai_url_for(port), expected_model_name)
+                probe_model_id(openai_url_for(port), expected_model_name, api_key=api_key)
                 or expected_model_name
             )
             if running_model != expected_model_name:
@@ -297,7 +311,7 @@ def attach_or_spawn(
             port = existing.get("port")
             if port and probe_health(health_url_for(port)):
                 running_model = (
-                    probe_model_id(openai_url_for(port), expected_model_name)
+                    probe_model_id(openai_url_for(port), expected_model_name, api_key=api_key)
                     or expected_model_name
                 )
                 if running_model != expected_model_name:
@@ -369,7 +383,9 @@ def attach_or_spawn(
             )
 
         # 7. Verify model name
-        running_model = probe_model_id(openai_url_for(port), expected_model_name)
+        running_model = probe_model_id(
+            openai_url_for(port), expected_model_name, api_key=api_key
+        )
         if running_model and running_model != expected_model_name:
             logger.warning(
                 f"{backend} server reports model={running_model!r} "
